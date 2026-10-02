@@ -3,7 +3,9 @@ import {
   useMemo,
   useState,
 } from 'react'
+
 import type { FormEvent } from 'react'
+
 import {
   Check,
   ChevronDown,
@@ -16,14 +18,21 @@ import {
   User,
   Users,
   X,
+  Power,
+  AlertTriangle,
 } from 'lucide-react'
+
 import {
+  activateUser,
   createUser,
+  deactivateUser,
   updateUser,
 } from '../../services/userService'
+
 import type {
   CreateUserRole,
 } from '../../services/userService'
+
 import { supabase } from '../../lib/supabase'
 
 interface UserRecord {
@@ -51,6 +60,11 @@ interface UserFormData {
   password: string
   confirmPassword: string
   role: CreateUserRole
+}
+
+interface StatusConfirmation {
+  user: UserRecord
+  nextStatus: boolean
 }
 
 const defaultForm: UserFormData = {
@@ -88,9 +102,7 @@ const roleBadgeClasses: Record<
     'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
 }
 
-function formatDate(
-  value: string,
-) {
+function formatDate(value: string) {
   return new Intl.DateTimeFormat(
     'id-ID',
     {
@@ -117,9 +129,7 @@ function getPrimaryRole(
   }
 }
 
-function getInitials(
-  fullName: string,
-) {
+function getInitials(fullName: string) {
   const words = fullName
     .trim()
     .split(/\s+/)
@@ -154,6 +164,11 @@ export default function UsersPage() {
   const [isSubmitting, setIsSubmitting] =
     useState(false)
 
+  const [
+    processingStatusUserId,
+    setProcessingStatusUserId,
+  ] = useState<string | null>(null)
+
   const [error, setError] =
     useState('')
 
@@ -177,6 +192,14 @@ export default function UsersPage() {
   const [editingUser, setEditingUser] =
     useState<UserRecord | null>(null)
 
+  const [
+    statusConfirmation,
+    setStatusConfirmation,
+  ] =
+    useState<StatusConfirmation | null>(
+      null,
+    )
+
   const [form, setForm] =
     useState<UserFormData>(
       defaultForm,
@@ -188,9 +211,7 @@ export default function UsersPage() {
       error: rolesError,
     } = await supabase
       .from('roles')
-      .select(
-        'id, code, name',
-      )
+      .select('id, code, name')
       .order('name')
 
     if (rolesError) {
@@ -224,73 +245,64 @@ export default function UsersPage() {
           )
         `,
       )
-      .order(
-        'created_at',
-        {
-          ascending: false,
-        },
-      )
+      .order('created_at', {
+        ascending: false,
+      })
 
     if (usersError) {
       throw usersError
     }
 
     const normalizedUsers =
-      (data ?? []).map(
-        (user) => {
-          const userRoles =
-            Array.isArray(
-              user.user_roles,
+      (data ?? []).map((user) => {
+        const userRoles =
+          Array.isArray(
+            user.user_roles,
+          )
+            ? user.user_roles
+            : []
+
+        const normalizedRoles =
+          userRoles
+            .map((userRole) => {
+              const role =
+                Array.isArray(
+                  userRole.roles,
+                )
+                  ? userRole.roles[0]
+                  : userRole.roles
+
+              if (!role) {
+                return null
+              }
+
+              return {
+                id: role.id,
+                code:
+                  role.code as CreateUserRole,
+                name: role.name,
+              }
+            })
+            .filter(
+              (
+                role,
+              ): role is RoleRecord =>
+                role !== null,
             )
-              ? user.user_roles
-              : []
 
-          const normalizedRoles =
-            userRoles
-              .map(
-                (
-                  userRole,
-                ) => {
-                  const role =
-                    Array.isArray(
-                      userRole.roles,
-                    )
-                      ? userRole
-                          .roles[0]
-                      : userRole.roles
-
-                  if (!role) {
-                    return null
-                  }
-
-                  return {
-                    id: role.id,
-                    code: role.code as CreateUserRole,
-                    name: role.name,
-                  }
-                },
-              )
-              .filter(
-                (
-                  role,
-                ): role is RoleRecord =>
-                  role !== null,
-              )
-
-          return {
-            id: user.id,
-            email: user.email,
-            full_name:
-              user.full_name,
-            is_active:
-              user.is_active,
-            created_at:
-              user.created_at,
-            roles:
-              normalizedRoles,
-          }
-        },
-      )
+        return {
+          id: user.id,
+          email: user.email,
+          full_name:
+            user.full_name,
+          is_active:
+            user.is_active,
+          created_at:
+            user.created_at,
+          roles:
+            normalizedRoles,
+        }
+      })
 
     setUsers(normalizedUsers)
   }
@@ -556,6 +568,119 @@ export default function UsersPage() {
     }
   }
 
+  const requestStatusChange = (
+    user: UserRecord,
+  ) => {
+    const role =
+      getPrimaryRole(user)
+
+    if (
+      role?.code ===
+      'super_admin'
+    ) {
+      setError(
+        'Akun Super Admin tidak dapat dinonaktifkan melalui fitur ini.',
+      )
+      setSuccess('')
+      return
+    }
+
+    setError('')
+    setSuccess('')
+
+    setStatusConfirmation({
+      user,
+      nextStatus:
+        !user.is_active,
+    })
+  }
+
+  const closeStatusConfirmation =
+    () => {
+      if (
+        processingStatusUserId
+      ) {
+        return
+      }
+
+      setStatusConfirmation(
+        null,
+      )
+    }
+
+  const handleStatusChange =
+    async () => {
+      if (
+        !statusConfirmation
+      ) {
+        return
+      }
+
+      const {
+        user,
+        nextStatus,
+      } =
+        statusConfirmation
+
+      setProcessingStatusUserId(
+        user.id,
+      )
+      setError('')
+      setSuccess('')
+
+      try {
+        if (nextStatus) {
+          await activateUser(
+            user.id,
+          )
+        } else {
+          await deactivateUser(
+            user.id,
+          )
+        }
+
+        setUsers(
+          (currentUsers) =>
+            currentUsers.map(
+              (currentUser) =>
+                currentUser.id ===
+                user.id
+                  ? {
+                      ...currentUser,
+                      is_active:
+                        nextStatus,
+                    }
+                  : currentUser,
+            ),
+        )
+
+        setSuccess(
+          nextStatus
+            ? `Akun ${user.full_name} berhasil diaktifkan.`
+            : `Akun ${user.full_name} berhasil dinonaktifkan.`,
+        )
+
+        setStatusConfirmation(
+          null,
+        )
+      } catch (statusError) {
+        console.error(
+          'Gagal mengubah status pengguna:',
+          statusError,
+        )
+
+        setError(
+          statusError instanceof Error
+            ? statusError.message
+            : 'Gagal mengubah status pengguna.',
+        )
+      } finally {
+        setProcessingStatusUserId(
+          null,
+        )
+      }
+    }
+
   return (
     <div className="min-h-full bg-slate-50 px-4 py-6 dark:bg-slate-950 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl">
@@ -570,9 +695,10 @@ export default function UsersPage() {
             </h1>
 
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-              Kelola akun pengguna dan
-              role yang dapat mengakses
-              sistem administrasi sekolah.
+              Kelola akun pengguna,
+              role, dan status akses
+              ke sistem administrasi
+              sekolah.
             </p>
           </div>
 
@@ -587,7 +713,6 @@ export default function UsersPage() {
               className="h-4 w-4"
               strokeWidth={2}
             />
-
             Tambah Pengguna
           </button>
         </div>
@@ -596,17 +721,40 @@ export default function UsersPage() {
           <div className="mb-5 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">
             <Check className="mt-0.5 h-4 w-4 shrink-0" />
 
-            <span>
-              {success}
-            </span>
+            <span>{success}</span>
+
+            <button
+              type="button"
+              onClick={() =>
+                setSuccess('')
+              }
+              className="ml-auto rounded-md p-1 opacity-60 transition hover:bg-emerald-100 hover:opacity-100 dark:hover:bg-emerald-900/40"
+              aria-label="Tutup pesan"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         )}
 
-        {error && !isModalOpen && (
-          <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
-            {error}
-          </div>
-        )}
+        {error &&
+          !isModalOpen && (
+            <div className="mb-5 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+
+              <span>{error}</span>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setError('')
+                }
+                className="ml-auto rounded-md p-1 opacity-60 transition hover:bg-red-100 hover:opacity-100 dark:hover:bg-red-900/40"
+                aria-label="Tutup pesan"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
 
         <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -658,7 +806,7 @@ export default function UsersPage() {
               </div>
 
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                <User className="h-5 w-5" />
+                <Power className="h-5 w-5" />
               </div>
             </div>
           </div>
@@ -672,25 +820,30 @@ export default function UsersPage() {
               <input
                 type="search"
                 value={search}
-                onChange={(event) =>
+                onChange={(
+                  event,
+                ) =>
                   setSearch(
                     event.target.value,
                   )
                 }
                 placeholder="Cari nama atau email..."
-                className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:focus:border-emerald-400 dark:focus:bg-slate-950"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:focus:border-emerald-400"
               />
             </div>
 
             <div className="relative">
               <select
                 value={roleFilter}
-                onChange={(event) =>
+                onChange={(
+                  event,
+                ) =>
                   setRoleFilter(
-                    event.target.value,
+                    event.target
+                      .value,
                   )
                 }
-                className="h-11 w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 px-4 pr-10 text-sm text-slate-700 outline-none transition focus:border-emerald-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:focus:border-emerald-400 dark:focus:bg-slate-950"
+                className="h-11 w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 px-4 pr-10 text-sm text-slate-700 outline-none transition focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:focus:border-emerald-400"
               >
                 <option value="all">
                   Semua Role
@@ -718,7 +871,9 @@ export default function UsersPage() {
                 value={
                   statusFilter
                 }
-                onChange={(event) =>
+                onChange={(
+                  event,
+                ) =>
                   setStatusFilter(
                     event.target
                       .value as
@@ -727,7 +882,7 @@ export default function UsersPage() {
                       | 'inactive',
                   )
                 }
-                className="h-11 w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 px-4 pr-10 text-sm text-slate-700 outline-none transition focus:border-emerald-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:focus:border-emerald-400 dark:focus:bg-slate-950"
+                className="h-11 w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 px-4 pr-10 text-sm text-slate-700 outline-none transition focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:focus:border-emerald-400"
               >
                 <option value="all">
                   Semua Status
@@ -771,14 +926,15 @@ export default function UsersPage() {
 
               <p className="mt-1 max-w-sm text-sm text-slate-500 dark:text-slate-400">
                 Tidak ada data yang
-                sesuai dengan pencarian
-                atau filter yang dipilih.
+                sesuai dengan
+                pencarian atau
+                filter yang dipilih.
               </p>
             </div>
           ) : (
             <>
               <div className="hidden overflow-x-auto md:block">
-                <table className="w-full min-w-[760px]">
+                <table className="w-full min-w-[980px]">
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50/80 dark:border-slate-800 dark:bg-slate-950/60">
                       <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
@@ -810,6 +966,14 @@ export default function UsersPage() {
                           getPrimaryRole(
                             user,
                           )
+
+                        const isProcessing =
+                          processingStatusUserId ===
+                          user.id
+
+                        const isSuperAdmin =
+                          role?.code ===
+                          'super_admin'
 
                         return (
                           <tr
@@ -866,10 +1030,10 @@ export default function UsersPage() {
 
                             <td className="px-6 py-4">
                               <span
-                                className={`inline-flex items-center gap-1.5 text-xs font-medium ${
+                                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
                                   user.is_active
-                                    ? 'text-emerald-700 dark:text-emerald-400'
-                                    : 'text-slate-500 dark:text-slate-400'
+                                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
                                 }`}
                               >
                                 <span
@@ -892,20 +1056,51 @@ export default function UsersPage() {
                               )}
                             </td>
 
-                            <td className="px-6 py-4 text-right">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  openEditModal(
-                                    user,
-                                  )
-                                }
-                                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
+                            <td className="px-6 py-4">
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openEditModal(
+                                      user,
+                                    )
+                                  }
+                                  className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
 
-                                Edit
-                              </button>
+                                  Edit
+                                </button>
+
+                                {!isSuperAdmin && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      requestStatusChange(
+                                        user,
+                                      )
+                                    }
+                                    disabled={
+                                      isProcessing
+                                    }
+                                    className={`inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                                      user.is_active
+                                        ? 'border border-red-200 bg-white text-red-600 hover:bg-red-50 dark:border-red-900/60 dark:bg-slate-900 dark:text-red-400 dark:hover:bg-red-950/30'
+                                        : 'border border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/60 dark:bg-slate-900 dark:text-emerald-400 dark:hover:bg-emerald-950/30'
+                                    }`}
+                                  >
+                                    {isProcessing ? (
+                                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-current" />
+                                    ) : (
+                                      <Power className="h-3.5 w-3.5" />
+                                    )}
+
+                                    {user.is_active
+                                      ? 'Nonaktifkan'
+                                      : 'Aktifkan'}
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         )
@@ -922,6 +1117,14 @@ export default function UsersPage() {
                       getPrimaryRole(
                         user,
                       )
+
+                    const isProcessing =
+                      processingStatusUserId ===
+                      user.id
+
+                    const isSuperAdmin =
+                      role?.code ===
+                      'super_admin'
 
                     return (
                       <div
@@ -982,10 +1185,10 @@ export default function UsersPage() {
                           )}
 
                           <span
-                            className={`inline-flex items-center gap-1.5 text-xs font-medium ${
+                            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
                               user.is_active
-                                ? 'text-emerald-700 dark:text-emerald-400'
-                                : 'text-slate-500 dark:text-slate-400'
+                                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
                             }`}
                           >
                             <span
@@ -1007,6 +1210,35 @@ export default function UsersPage() {
                             )}
                           </span>
                         </div>
+
+                        {!isSuperAdmin && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              requestStatusChange(
+                                user,
+                              )
+                            }
+                            disabled={
+                              isProcessing
+                            }
+                            className={`mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                              user.is_active
+                                ? 'border border-red-200 bg-white text-red-600 hover:bg-red-50 dark:border-red-900/60 dark:bg-slate-900 dark:text-red-400 dark:hover:bg-red-950/30'
+                                : 'border border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/60 dark:bg-slate-900 dark:text-emerald-400 dark:hover:bg-emerald-950/30'
+                            }`}
+                          >
+                            {isProcessing ? (
+                              <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-current" />
+                            ) : (
+                              <Power className="h-4 w-4" />
+                            )}
+
+                            {user.is_active
+                              ? 'Nonaktifkan Pengguna'
+                              : 'Aktifkan Pengguna'}
+                          </button>
+                        )}
                       </div>
                     )
                   },
@@ -1268,9 +1500,10 @@ export default function UsersPage() {
                             current,
                           ) => ({
                             ...current,
-                            role: event
-                              .target
-                              .value as CreateUserRole,
+                            role:
+                              event
+                                .target
+                                .value as CreateUserRole,
                           }),
                         )
                       }
@@ -1379,6 +1612,110 @@ export default function UsersPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {statusConfirmation && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="status-dialog-title"
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+          >
+            <div className="flex items-start gap-4">
+              <div
+                className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
+                  statusConfirmation.nextStatus
+                    ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400'
+                    : 'bg-amber-50 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400'
+                }`}
+              >
+                {statusConfirmation.nextStatus ? (
+                  <Power className="h-5 w-5" />
+                ) : (
+                  <AlertTriangle className="h-5 w-5" />
+                )}
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <h2
+                  id="status-dialog-title"
+                  className="text-lg font-semibold text-slate-950 dark:text-white"
+                >
+                  {statusConfirmation.nextStatus
+                    ? 'Aktifkan pengguna?'
+                    : 'Nonaktifkan pengguna?'}
+                </h2>
+
+                <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">
+                  {statusConfirmation.nextStatus
+                    ? `Akun ${statusConfirmation.user.full_name} akan dapat digunakan kembali untuk mengakses sistem.`
+                    : `Akun ${statusConfirmation.user.full_name} tidak dapat digunakan untuk mengakses sistem sampai diaktifkan kembali. Data dan riwayat pengguna tetap tersimpan.`}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={
+                  closeStatusConfirmation
+                }
+                disabled={
+                  Boolean(
+                    processingStatusUserId,
+                  )
+                }
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                aria-label="Tutup"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={
+                  closeStatusConfirmation
+                }
+                disabled={
+                  Boolean(
+                    processingStatusUserId,
+                  )
+                }
+                className="h-11 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Batal
+              </button>
+
+              <button
+                type="button"
+                onClick={
+                  handleStatusChange
+                }
+                disabled={
+                  Boolean(
+                    processingStatusUserId,
+                  )
+                }
+                className={`inline-flex h-11 items-center justify-center gap-2 rounded-xl px-5 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                  statusConfirmation.nextStatus
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200'
+                }`}
+              >
+                {processingStatusUserId ? (
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white dark:border-slate-300 dark:border-t-slate-900" />
+                ) : (
+                  <Power className="h-4 w-4" />
+                )}
+
+                {statusConfirmation.nextStatus
+                  ? 'Aktifkan'
+                  : 'Nonaktifkan'}
+              </button>
+            </div>
           </div>
         </div>
       )}

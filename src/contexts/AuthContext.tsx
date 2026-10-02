@@ -172,6 +172,30 @@ export function AuthProvider({
       const nextProfile =
         await loadUserProfile(authUser)
 
+      if (!nextProfile) {
+        await supabase.auth.signOut()
+
+        setSession(null)
+        setAuthUser(null)
+        setProfile(null)
+
+        return
+      }
+
+      if (!nextProfile.isActive) {
+        console.warn(
+          'Akun pengguna sedang nonaktif. Session akan diakhiri.',
+        )
+
+        await supabase.auth.signOut()
+
+        setSession(null)
+        setAuthUser(null)
+        setProfile(null)
+
+        return
+      }
+
       setProfile(nextProfile)
     } catch (error) {
       console.error(
@@ -203,33 +227,66 @@ export function AuthProvider({
 
         const currentSession = data.session
 
-        setSession(currentSession)
-        setAuthUser(
-          currentSession?.user ?? null,
-        )
+        if (!currentSession?.user) {
+          setSession(null)
+          setAuthUser(null)
+          setProfile(null)
 
-        if (currentSession?.user) {
-          try {
-            const nextProfile =
-              await loadUserProfile(
-                currentSession.user,
-              )
+          return
+        }
 
-            if (isMounted) {
-              setProfile(nextProfile)
-            }
-          } catch (profileError) {
-            console.error(
-              'Gagal mengambil profil pengguna:',
-              profileError,
+        try {
+          const nextProfile =
+            await loadUserProfile(
+              currentSession.user,
             )
 
+          if (!isMounted) {
+            return
+          }
+
+          if (!nextProfile) {
+            await supabase.auth.signOut()
+
             if (isMounted) {
+              setSession(null)
+              setAuthUser(null)
               setProfile(null)
             }
+
+            return
           }
-        } else {
-          setProfile(null)
+
+          if (!nextProfile.isActive) {
+            console.warn(
+              'Akun pengguna sedang nonaktif. Session akan diakhiri.',
+            )
+
+            await supabase.auth.signOut()
+
+            if (isMounted) {
+              setSession(null)
+              setAuthUser(null)
+              setProfile(null)
+            }
+
+            return
+          }
+
+          setSession(currentSession)
+          setAuthUser(currentSession.user)
+          setProfile(nextProfile)
+        } catch (profileError) {
+          console.error(
+            'Gagal mengambil profil pengguna:',
+            profileError,
+          )
+
+          if (isMounted) {
+            setSession(null)
+            setAuthUser(null)
+            setProfile(null)
+          }
         }
       } catch (error) {
         console.error(
@@ -259,14 +316,12 @@ export function AuthProvider({
           return
         }
 
-        setSession(nextSession)
-        setAuthUser(
-          nextSession?.user ?? null,
-        )
-
         if (!nextSession?.user) {
+          setSession(null)
+          setAuthUser(null)
           setProfile(null)
           setIsLoading(false)
+
           return
         }
 
@@ -276,9 +331,41 @@ export function AuthProvider({
               nextSession.user,
             )
 
-          if (isMounted) {
-            setProfile(nextProfile)
+          if (!isMounted) {
+            return
           }
+
+          if (!nextProfile) {
+            await supabase.auth.signOut()
+
+            if (isMounted) {
+              setSession(null)
+              setAuthUser(null)
+              setProfile(null)
+            }
+
+            return
+          }
+
+          if (!nextProfile.isActive) {
+            console.warn(
+              'Akun pengguna sedang nonaktif. Session akan diakhiri.',
+            )
+
+            await supabase.auth.signOut()
+
+            if (isMounted) {
+              setSession(null)
+              setAuthUser(null)
+              setProfile(null)
+            }
+
+            return
+          }
+
+          setSession(nextSession)
+          setAuthUser(nextSession.user)
+          setProfile(nextProfile)
         } catch (error) {
           console.error(
             'Gagal mengambil profil setelah perubahan session:',
@@ -286,6 +373,8 @@ export function AuthProvider({
           )
 
           if (isMounted) {
+            setSession(null)
+            setAuthUser(null)
             setProfile(null)
           }
         } finally {

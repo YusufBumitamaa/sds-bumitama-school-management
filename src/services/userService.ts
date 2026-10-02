@@ -21,6 +21,11 @@ export interface UpdateUserPayload {
   role: CreateUserRole
 }
 
+export interface UpdateUserStatusPayload {
+  userId: string
+  isActive: boolean
+}
+
 export interface CreatedUser {
   id: string
   email: string
@@ -39,6 +44,13 @@ export interface UpdatedUser {
   isActive: boolean
 }
 
+export interface UpdatedUserStatus {
+  id: string
+  email: string
+  fullName: string
+  isActive: boolean
+}
+
 export interface CreateUserResponse {
   success: boolean
   message: string
@@ -49,6 +61,12 @@ export interface UpdateUserResponse {
   success: boolean
   message: string
   data?: UpdatedUser
+}
+
+export interface UpdateUserStatusResponse {
+  success: boolean
+  message: string
+  data?: UpdatedUserStatus
 }
 
 async function getAuthenticatedSession() {
@@ -74,18 +92,6 @@ async function getAuthenticatedSession() {
 
 /**
  * Mengambil pesan error asli dari Supabase Edge Function.
- *
- * FunctionsHttpError biasanya menyediakan `context`
- * berupa Response HTTP. Response tersebut dapat berisi
- * JSON seperti:
- *
- * {
- *   success: false,
- *   message: "..."
- * }
- *
- * Dengan helper ini, pesan tersebut tidak lagi tertutup
- * oleh pesan umum "Edge Function returned a non-2xx status code".
  */
 async function getFunctionErrorMessage(
   error: unknown,
@@ -147,8 +153,8 @@ async function getFunctionErrorMessage(
           }
         }
       } catch {
-        // Jika response body tidak dapat dibaca,
-        // lanjutkan ke fallback di bawah.
+        // Gunakan fallback jika response
+        // tidak dapat dibaca.
       }
     }
 
@@ -262,4 +268,68 @@ export async function updateUser(
   }
 
   return response
+}
+
+export async function updateUserStatus(
+  payload: UpdateUserStatusPayload,
+): Promise<UpdateUserStatusResponse> {
+  await getAuthenticatedSession()
+
+  const {
+    data,
+    error,
+  } = await supabase.functions.invoke(
+    'update-user-status',
+    {
+      body: {
+        userId: payload.userId,
+        isActive: payload.isActive,
+      },
+    },
+  )
+
+  if (error) {
+    console.error(
+      'update-user-status function error:',
+      error,
+    )
+
+    const errorMessage =
+      await getFunctionErrorMessage(
+        error,
+        'Gagal mengubah status pengguna.',
+      )
+
+    throw new Error(errorMessage)
+  }
+
+  const response =
+    data as UpdateUserStatusResponse
+
+  if (!response?.success) {
+    throw new Error(
+      response?.message ||
+        'Status pengguna gagal diperbarui.',
+    )
+  }
+
+  return response
+}
+
+export async function deactivateUser(
+  userId: string,
+): Promise<UpdateUserStatusResponse> {
+  return updateUserStatus({
+    userId,
+    isActive: false,
+  })
+}
+
+export async function activateUser(
+  userId: string,
+): Promise<UpdateUserStatusResponse> {
+  return updateUserStatus({
+    userId,
+    isActive: true,
+  })
 }
